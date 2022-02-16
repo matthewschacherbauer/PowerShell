@@ -3,12 +3,12 @@
 IIS WEB MANAGEMENT SERVICE (WMSVC) - CERTIFICATE INSTALLATION
 
 Matthew Schacherbauer
-2021-07-04
+2022-02-16
 
 https://github.com/matthewschacherbauer
 https://www.matthewschacherbauer.com
 
-v1.2
+v1.2.1
 
 ===============
 
@@ -59,7 +59,7 @@ Param (
     # Define the minimum number of days left on the certificate
     # Less than this and the certificate will be replaced
     [ValidateNotNullOrEmpty()]
-    $MinimumDaysRamaining	= 30
+    $MinimumDaysRemaining	= 30
 )
 
 
