@@ -3,7 +3,7 @@
 CERTIFICATE GENERATION MODULE
 
 Matthew Schacherbauer
-2021-08-10
+2022-06-10
 
 https://github.com/matthewschacherbauer
 https://www.matthewschacherbauer.com
@@ -216,42 +216,55 @@ Function DecodeCsrWithOpenssl {
     [CmdletBinding()]
     Param (
         [ValidateScript({Test-Path -Path $_})]
-        $OpenSslPath,
+        $OpenSslPath = $ENV:OpenSsl + "\bin\openssl.exe",
         [ValidateScript({Test-Path -Path $_})]
         $Path
     )
 
+    if (!$ENV:RANDFILE) { $ENV:RANDFILE = $ENV:USERPROFILE + "\.rnd" }
+    if (!$ENV:OPENSSL_CONF) { $ENV:OPENSSL_CONF = "$($OpenSslPath.Replace("openssl.exe","openssl.cnf"))" }
+
     $returnData = [PSCustomObject] @{
         'Subject' = [PSCustomObject] @{
-            'C' = ""
-            'ST' = ""
-            'L' = ""
-            'O' = ""
-            'OU' = ""
-            'CN' = ""
+            'CN' = ""   # CommonName
+            'OU' = ""   # OrganizationalUnit
+            'O' = ""    # Organization
+            'L' = ""    # Locality
+            'ST' = ""   # State
+            'C' = ""    # Country
             'emailAddress' = ""
         }
         'SAN' = [PSCustomObject] @{
-            'Hostname' = @()
+            'DNS' = @()
             'IP' = @()
             'Email' = @()
         }
     }
- 
+
     # Note: Redirect STDERR from openssl because it writes non-errors to it.
-    $sCmd = $(cmd.exe "/C $($OpenSslPath) req -text -noout -verify -in $($Path) 2> nul")
-    $sSan = $sCmd | Where-Object { ($_ -like "*DNS*") -or ($_ -like "*IP Address*") -or ($_ -like "*RFC822*") }
-    $sSubj = $sCmd | Where-Object { $_ -like "*Subject:*" }
-    Write-Verbose "Got: $sCmd"
+    $sCmd = "`"$($OpenSslPath)`" req -text -noout -verify -in `"$($Path)`" 2> nul"
+
+    # Execute Command
+    Write-Verbose "Executing Command: $($sCmd)"
+    $sResult = CMD.EXE /C $sCmd '2>&1'
+
+    # TODO: Capture and parse OpenSSL response.
+    if ($?) { Write-Verbose ($sResult | Out-String) }
+    else { Throw ($sResult | Out-String) }
+ 
+    # Parse for attributes
+    $sSan = $sResult | Where-Object { ($_ -like "*DNS*") -or ($_ -like "*IP Address*") -or ($_ -like "*RFC822*") -or ($_ -like "*email*") }
+    $sSubj = $sResult | Where-Object { $_ -like "*Subject:*" }
  
     if ($sSan) {
         $sSan = $sSan.Trim().Split(":").Split(",").Trim()
 
         for ($i = 0; $i -lt $sSan.count; $i++) {
             switch ( $sSan[$i] ) {
-                'DNS'           { $returnData.SAN.Hostname += $sSan[$i+1] }
+                'DNS'           { $returnData.SAN.DNS += $sSan[$i+1] }
                 'IP Address'    { $returnData.SAN.IP += $sSan[$i+1] }
                 'RFC822 Name'   { $returnData.SAN.Email += $sSan[$i+1] }
+                'email'         { $returnData.SAN.Email += $sSan[$i+1] }
             }
         }
     }
@@ -261,12 +274,12 @@ Function DecodeCsrWithOpenssl {
 
         for ($i = 0; $i -lt $sSubj.count; $i++) {
             switch ( $sSubj[$i] ) {
-                'C'         { $returnData.Subject.C += $sSubj[$i+1] }
-                'ST'        { $returnData.Subject.ST += $sSubj[$i+1] }
-                'L'         { $returnData.Subject.L += $sSubj[$i+1] }
-                'O'         { $returnData.Subject.O += $sSubj[$i+1] }
-                'OU'        { $returnData.Subject.OU += $sSubj[$i+1] }
-                'CN'        { $returnData.Subject.CN += $sSubj[$i+1] }
+                'CN'        { $returnData.Subject.CN += $sSubj[$i+1] }  # CommonName
+                'OU'        { $returnData.Subject.OU += $sSubj[$i+1] }  # OrganizationalUnit
+                'O'         { $returnData.Subject.O += $sSubj[$i+1] }   # Organization
+                'L'         { $returnData.Subject.L += $sSubj[$i+1] }   # Locality
+                'ST'        { $returnData.Subject.ST += $sSubj[$i+1] }  # State
+                'C'         { $returnData.Subject.C += $sSubj[$i+1] }   # Country
                 'emailAddress' { $returnData.Subject.emailAddress += $sSubj[$i+1] }
             }
         }
@@ -1104,7 +1117,7 @@ Function Get-EnterpriseCAList {
     Retrieves the list of Enterprise Certificate Authorities from Active Directory.
     .PARAMETER AdcsTemplate
     Filter the list to include only Certificate Authorities that issue the specified Template.
-    .PARAMETER AdcsDNSName
+    .PARAMETER AdcsDnsName
     Filter the list to include only Certificate Authorities whose DNS name includes the specified string.
     This is not a literal match.
     .PARAMETER AdcsName
@@ -1115,24 +1128,29 @@ Function Get-EnterpriseCAList {
     If the Certificate Authority is proxied by a Certificate Enrollment Services (CES) server, then this will cause the CES server to be tested instead.
     .NOTES
     Author:     Matthew Schacherbauer
-    Updated:    2021-03-21
+    Updated:    2022-02-24
         
-    Version:    1.0
+    Version:    1.0.1
     .LINK
     https://www.matthewschacherbauer.com
     #>
 
+    #Requires -Modules ActiveDirectory
+
     [CmdletBinding()]
     Param (
         [string] $AdcsTemplate,
-        [string] $AdcsDNSName,
+        [string] $AdcsDnsName,
         [string] $AdcsName,
         [switch] $Online
     )
 
     Write-Verbose "Call Get-EnterpriseCaList"
 
-    $sEnrollmentDN = "CN=Enrollment Services,CN=Public Key Services,CN=Services,CN=Configuration,$([System.DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().GetDirectoryEntry().distinguishedName)"
+    # Get a list of Enterprise Certificate Authorities from Active Directory
+    # Get-ADObject requires Active Directory RSAT to be installed.
+    # TODO: Implement an alternative which does not require the RSAT.
+    $sEnrollmentDN = "CN=Enrollment Services,CN=Public Key Services,CN=Services,CN=Configuration,$([System.DirectoryServices.ActiveDirectory.Forest]::GetCurrentForest().RootDomain.GetDirectoryEntry().distinguishedName)"
     $oEnrollmentServices = Get-ADObject -SearchBase $sEnrollmentDN -LDAPFilter "(objectClass=pKIEnrollmentService)" -Properties dNSHostName,certificateTemplates,msPKI-Enrollment-Servers |
         Select-Object dNSHostName,Name,DistinguishedName,cACertificateDN,CN,certificateTemplates,msPKI-Enrollment-Servers,ObjectGUID
 
@@ -1392,17 +1410,17 @@ Function New-OpenSslCertificateConfiguration {
 
         # Distinguished Name
         [ValidateNotNullOrEmpty()]
-        [string] $CountryName = $Global:DefaultAdcsCountryName,
+        [string] $OrganizationalUnit = $Global:DefaultAdcsOrganizationUnit,
+        [ValidateNotNullOrEmpty()]
+        [string] $Organization = $Global:DefaultAdcsOrganization,
+        [string] $StreetAddress = $Global:DefaultAdcsStreetAddress,
+        [string] $PostalCode = $Global:DefaultAdcsPostalCode,
+        [ValidateNotNullOrEmpty()]
+        [string] $Locality = $Global:DefaultAdcsLocality,
         [ValidateNotNullOrEmpty()]
         [string] $State = $Global:DefaultAdcsState,
         [ValidateNotNullOrEmpty()]
-        [string] $Locality = $Global:DefaultAdcsLocality,
-        [string] $PostalCode = $Global:DefaultAdcsPostalCode,
-        [string] $StreetAddress = $Global:DefaultAdcsStreetAddress,
-        [ValidateNotNullOrEmpty()]
-        [string] $Organization = $Global:DefaultAdcsOrganization,
-        [ValidateNotNullOrEmpty()]
-        [string] $OrganizationalUnitName = $Global:DefaultAdcsOrganizationUnit,
+        [string] $CountryName = $Global:DefaultAdcsCountryName,
         [string[]] $Email = $Global:DefaultAdcsEmail,
 
         # Include Email in subjectAltName Attribute
@@ -1474,7 +1492,7 @@ localityName           = `"$($Locality)`"                # L=
 $( if (!$PostalCode) { "#" } )postalCode            = `"$($PostalCode)`"              # L/postalcode=
 $( if (!$StreetAddress) { "#" } )streetAddress         = `"$($StreetAddress)`"           # L/street=
 organizationName       = `"$($Organization)`"            # O=
-organizationalUnitName = `"$($OrganizationalUnitName)`"  # OU=
+organizationalUnitName = `"$($OrganizationalUnit)`"  # OU=
 commonName             = `"$($Hostname[0])`"             # CN=
 $( if (!$Email) { "#" } )emailAddress           = `"$($Email[0])`"                   # CN/emailAddress=
 
@@ -1504,7 +1522,7 @@ Function New-CertificateSigningRequest {
     The file path to the OpenSSL configuration file.
 
     This parameter is mutually exclusive with the following parameters:
-    CountryName, State, Locality, PostalCode, StreetAddress, Organization, OrganizationalUnitName, Email, Bits
+    CountryName, State, Locality, PostalCode, StreetAddress, Organization, OrganizationalUnit, Email, Bits
     .PARAMETER Hostname
     A string array of hostnames to include in the subjectAltName of the Certificate.
     The first hostname in the array will also be used for the CommonName value on the Certificate.
@@ -1512,27 +1530,27 @@ Function New-CertificateSigningRequest {
     A string array of IPs to include in the subjectAltName of the Certificate.
     .PARAMETER Bits
     The key length to generate.
-    .PARAMETER CountryName
-    The CountryName value on the Certificate
-    C=
-    .PARAMETER State
-    The State value on the Certificate
-    S=
-    .PARAMETER Locality
-    The Locality value on the Certificate
-    L=
-    .PARAMETER PostalCode
-    The PostalCode value on the Certificate
-    L/postalcode=
-    .PARAMETER StreetAddress
-    The StreetAddress value on the Certificate
-    L/street=
+    .PARAMETER OrganizationalUnit
+    The OrganizationalUnit value on the Certificate
+    OU=
     .PARAMETER Organization
     The Organization value on the Certificate
     O=
-    .PARAMETER OrganizationalUnitName
-    The OrganizationalUnitName value on the Certificate
-    OU=
+    .PARAMETER StreetAddress
+    The StreetAddress value on the Certificate
+    L/street=
+    .PARAMETER PostalCode
+    The PostalCode value on the Certificate
+    L/postalcode=
+    .PARAMETER Locality
+    The Locality value on the Certificate
+    L=
+    .PARAMETER State
+    The State value on the Certificate
+    S=
+    .PARAMETER CountryName
+    The CountryName value on the Certificate
+    C=
     .PARAMETER Email
     The EmailAddress value on the Certificate
     CN/emailAddress=
@@ -1570,23 +1588,23 @@ Function New-CertificateSigningRequest {
         [int] $Bits = $Global:DefaultAdcsBits,
         [Parameter(ParameterSetName="ConfigGen")]
         [ValidateNotNullOrEmpty()]
-        [string] $CountryName = $Global:DefaultAdcsCountryName,
+        [string] $OrganizationalUnit = $Global:DefaultAdcsOrganizationUnit,
+        [Parameter(ParameterSetName="ConfigGen")]
+        [ValidateNotNullOrEmpty()]
+        [string] $Organization = $Global:DefaultAdcsOrganization,
+        [Parameter(ParameterSetName="ConfigGen")]
+        [string] $StreetAddress = $Global:DefaultAdcsStreetAddress,
+        [Parameter(ParameterSetName="ConfigGen")]
+        [string] $PostalCode = $Global:DefaultAdcsPostalCode,
+        [Parameter(ParameterSetName="ConfigGen")]
+        [ValidateNotNullOrEmpty()]
+        [string] $Locality = $Global:DefaultAdcsLocality,
         [Parameter(ParameterSetName="ConfigGen")]
         [ValidateNotNullOrEmpty()]
         [string] $State = $Global:DefaultAdcsState,
         [Parameter(ParameterSetName="ConfigGen")]
         [ValidateNotNullOrEmpty()]
-        [string] $Locality = $Global:DefaultAdcsLocality,
-        [Parameter(ParameterSetName="ConfigGen")]
-        [string] $PostalCode = $Global:DefaultAdcsPostalCode,
-        [Parameter(ParameterSetName="ConfigGen")]
-        [string] $StreetAddress = $Global:DefaultAdcsStreetAddress,
-        [Parameter(ParameterSetName="ConfigGen")]
-        [ValidateNotNullOrEmpty()]
-        [string] $Organization = $Global:DefaultAdcsOrganization,
-        [Parameter(ParameterSetName="ConfigGen")]
-        [ValidateNotNullOrEmpty()]
-        [string] $OrganizationalUnitName = $Global:DefaultAdcsOrganizationUnit,
+        [string] $CountryName = $Global:DefaultAdcsCountryName,
         [Parameter(ParameterSetName="ConfigGen")]
         [string[]] $Email = $Global:DefaultAdcsEmail,
 
@@ -1612,8 +1630,8 @@ Function New-CertificateSigningRequest {
     $ENV:RANDFILE = $ENV:USERPROFILE + "\.rnd"
 
     # Determine output file paths
-    $sOutKey = $oOutPath.FullName + "\" + $Hostname[0] + ".key"
-    $sOutRequest = $oOutPath.FullName + "\" + $Hostname[0] + ".csr"
+    $sOutKey = $oOutPath.FullName + "\" + $Hostname[0].Replace('*','') + ".key"
+    $sOutRequest = $oOutPath.FullName + "\" + $Hostname[0].Replace('*','') + ".csr"
 
     # Check Encryption
     if ($Encrypt) {
@@ -1630,20 +1648,22 @@ Function New-CertificateSigningRequest {
     # Import or generate a request configuration file
     if ($oConfig) {
         Write-Verbose "Using input OpenSSL configuration file: $($oConfig.FullName)"
+
+        # TODO: Parse configuration file to read the key size.
     }
     else {
-        $sConfig = $oOutPath.FullName + "\" + $Hostname[0] + ".cfg"
+        $sConfig = $oOutPath.FullName + "\" + $Hostname[0].Replace('*','') + ".cfg"
         Write-Verbose "Generating new OpenSSL configuration file with input parameters. Using path: $($sConfig)"
         New-OpenSslCertificateConfiguration `
             -Hostname $Hostname `
             -Ip $Ip `
-            -CountryName $CountryName `
-            -State $State `
-            -Locality $Locality `
-            -PostalCode $PostalCode `
-            -StreetAddress $StreetAddress `
+            -OrganizationalUnit $OrganizationalUnit `
             -Organization $Organization `
-            -OrganizationalUnitName $OrganizationalUnitName `
+            -StreetAddress $StreetAddress `
+            -PostalCode $PostalCode `
+            -Locality $Locality `
+            -State $State `
+            -CountryName $CountryName `
             -Email $Email `
             -IncludeEmailInSan:$IncludeEmailInSan `
             -Bits $Bits `
@@ -1853,15 +1873,19 @@ Function New-EnterpriseCertificateAuthoritySignature {
     Provide one or more email address to be written to the Subject Alternative Name attribute.
     Using this parameter will discard any SAN attribute that exists in the certificate request.
     The Enterprise CA must support +EDITF_ATTRIBUTESUBJECTALTNAME2
+    .PARAMETER SanReplacementMode
+    Sets the handling for SAN attribute modifications. May be either "Merge" or "Replace".
+    Merge mode will append any specified SAN attributes to the end of what exists on the signing request.
+    Replace mode will discard all SAN attributes in the signing request.
     .PARAMETER Path
     The file path to the Certificate Signing Request (CSR) file that should be submitted to the Certificate Authority for signing.
     .PARAMETER OutPath
     The directory path for writing the signed Certificate, Certificate Chain, and Response files.
     .NOTES
     Author:     Matthew Schacherbauer
-    Updated:    2021-08-10
+    Updated:    2021-08-13
         
-    Version:    2.4
+    Version:    2.6
     .LINK
     https://www.matthewschacherbauer.com
     #>
@@ -1869,7 +1893,6 @@ Function New-EnterpriseCertificateAuthoritySignature {
     [CmdletBinding()]
     Param (
         # Options
-        [ValidateNotNullOrEmpty()]
         [string] $AdcsServer = $Global:DefaultAdcsServer,
         [ValidateNotNullOrEmpty()]
         [string] $AdcsTemplate = $Global:DefaultAdcsTemplate,
@@ -1879,6 +1902,10 @@ Function New-EnterpriseCertificateAuthoritySignature {
         [string[]] $SetSanHostname,
         [string[]] $SetSanIp,
         [string[]] $SetSanEmail,
+
+        # Subject Alternative Name Mode
+        [ValidateSet("Merge","Replace")]
+        [string] $SanReplacementMode = "Replace",
 
         # Override Hash Algorithm
         #[ValidateSet('SHA256','SHA384','SHA512')]
@@ -1904,6 +1931,42 @@ Function New-EnterpriseCertificateAuthoritySignature {
     $sOutCert = $oOutPath.FullName + "\" + $oPath.BaseName + ".cer"
     $sOutChainP7b = $oOutPath.FullName + "\" + $oPath.BaseName + ".chain.p7b"
     $sOutChainRsp = $oOutPath.FullName + "\" + $oPath.BaseName + ".chain.rsp"
+
+    # Select an available ADCS resource
+    if (!$AdcsServer) {
+        Write-Verbose "Querying for an available ADCS Server"
+        $oAdcsServer = Get-EnterpriseCAList -AdcsTemplate $AdcsTemplate -Online | Get-Random
+
+        if (!$oAdcsServer) {
+            Throw "Unable to locate any online Active Directory Certificate Authority that issues the certificate template ($($AdcsTemplate))."
+        }
+
+        $AdcsServer = "$($oAdcsServer.dNSHostName)\$($oAdcsServer.Name)"
+        Write-Verbose "Selected ADCS Server ($($AdcsServer))"
+    }
+
+    # Retrieve the SAN attributes in the request
+    if ($SanReplacementMode -eq "Merge") {
+        Write-Verbose "Merging SAN attributes in signing request with override values"
+        $oCsrAttributes = DecodeCsrWithOpenssl -Path $oPath.FullName
+
+        Write-Verbose "Retrieved the following SAN attributes from the request file:"
+        Write-Verbose "Hostnames: $($oCsrAttributes.SAN.DNS | Out-String)"
+        Write-Verbose "IP: $($oCsrAttributes.SAN.IP | Out-String)"
+        Write-Verbose "Email: $($oCsrAttributes.SAN.Email | Out-String)"
+
+        if ($oCsrAttributes.SAN.DNS) {
+            $SetSanHostname = $oCsrAttributes.SAN.DNS + $SetSanHostname
+        }
+
+        if ($oCsrAttributes.SAN.IP) {
+            $SetSanIp = $oCsrAttributes.SAN.IP + $SetSanIp
+        }
+
+        if ($oCsrAttributes.SAN.Email) {
+            $SetSanEmail = $oCsrAttributes.SAN.Email + $SetSanEmail
+        }
+    }
 
     # Dynamically build -attrib parameter
     $sAttributes = "CertificateTemplate:$($AdcsTemplate)"
@@ -2410,7 +2473,7 @@ Function New-CertificatePackage {
     The file path to the OpenSSL configuration file.
 
     This parameter is mutually exclusive with the following parameters:
-    CountryName, State, Locality, PostalCode, StreetAddress, Organization, OrganizationalUnitName, Email, Bits
+    CountryName, State, Locality, PostalCode, StreetAddress, Organization, OrganizationalUnit, Email, Bits
     .PARAMETER Hostname
     A string array of hostnames to include in the subjectAltName of the Certificate.
     The first hostname in the array will also be used for the CommonName value on the Certificate.
@@ -2418,27 +2481,27 @@ Function New-CertificatePackage {
     A string array of IPs to include in the subjectAltName of the Certificate.
     .PARAMETER Bits
     The key length to generate.
-    .PARAMETER CountryName
-    The CountryName value on the Certificate
-    C=
-    .PARAMETER State
-    The State value on the Certificate
-    S=
-    .PARAMETER Locality
-    The Locality value on the Certificate
-    L=
-    .PARAMETER PostalCode
-    The PostalCode value on the Certificate
-    L/postalcode=
-    .PARAMETER StreetAddress
-    The StreetAddress value on the Certificate
-    L/street=
+    .PARAMETER OrganizationalUnit
+    The OrganizationalUnit value on the Certificate
+    OU=
     .PARAMETER Organization
     The Organization value on the Certificate
     O=
-    .PARAMETER OrganizationalUnitName
-    The OrganizationalUnitName value on the Certificate
-    OU=
+    .PARAMETER StreetAddress
+    The StreetAddress value on the Certificate
+    L/street=
+    .PARAMETER PostalCode
+    The PostalCode value on the Certificate
+    L/postalcode=
+    .PARAMETER Locality
+    The Locality value on the Certificate
+    L=
+    .PARAMETER State
+    The State value on the Certificate
+    S=
+    .PARAMETER CountryName
+    The CountryName value on the Certificate
+    C=
     .PARAMETER Email
     The EmailAddress value on the Certificate
     The first email will be used in the certificate subject.
@@ -2466,16 +2529,16 @@ Function New-CertificatePackage {
     .EXAMPLE
     Generates a certificate package for test.wolfspirit.net.
 
-    New-CertificatePackage -Bits 4096 -CountryName US -State California -Locality Sacramento -Organization "WolfSpirit.Net" -OrganizationalUnitName "Test Lab" -AdcsServer "WSNOCCA20.lan.wolfspirit.net\WolfSpirit.Net RSA SHA256 Issuing CA 20" -AdcsTemplate "WS-RSA-WebServer-v3" -ValidityDays 365 -Hostname "test.wolfspirit.net" -OutPath "C:\Certificates"
+    New-CertificatePackage -Bits 4096 -CountryName US -State California -Locality Sacramento -Organization "WolfSpirit.Net" -OrganizationalUnit "Test Lab" -AdcsServer "WSNOCCA20.lan.wolfspirit.net\WolfSpirit.Net RSA SHA256 Issuing CA 20" -AdcsTemplate "WS-RSA-WebServer-v3" -ValidityDays 365 -Hostname "test.wolfspirit.net" -OutPath "C:\Certificates"
     .EXAMPLE
     Generates a multi-domain certificate.
 
-    New-CertificatePackage -Bits 4096 -CountryName US -State California -Locality Sacramento -Organization "WolfSpirit.Net" -OrganizationalUnitName "Test Lab" -AdcsServer "WSNOCCA20.lan.wolfspirit.net\WolfSpirit.Net RSA SHA256 Issuing CA 20" -AdcsTemplate "WS-RSA-WebServer-v3" -ValidityDays 365 -Hostname "test.wolfspirit.net","www.test.wolfspirit.net","test-2.wolfspirit.net" -OutPath "C:\Certificates"
+    New-CertificatePackage -Bits 4096 -CountryName US -State California -Locality Sacramento -Organization "WolfSpirit.Net" -OrganizationalUnit "Test Lab" -AdcsServer "WSNOCCA20.lan.wolfspirit.net\WolfSpirit.Net RSA SHA256 Issuing CA 20" -AdcsTemplate "WS-RSA-WebServer-v3" -ValidityDays 365 -Hostname "test.wolfspirit.net","www.test.wolfspirit.net","test-2.wolfspirit.net" -OutPath "C:\Certificates"
     .NOTES
     Author:     Matthew Schacherbauer
-    Updated:    2021-05-23
+    Updated:    2022-05-12
 
-    Version:    2.1.2
+    Version:    2.1.3
     #>
 
     [CmdletBinding()]
@@ -2500,23 +2563,23 @@ Function New-CertificatePackage {
         [int] $Bits = $Global:DefaultAdcsBits,
         [Parameter(ParameterSetName="DataIn")]
         [ValidateNotNullOrEmpty()]
-        [string] $CountryName = $Global:DefaultAdcsCountryName,
+        [string] $OrganizationalUnit = $Global:DefaultAdcsOrganizationUnit,
+        [Parameter(ParameterSetName="DataIn")]
+        [ValidateNotNullOrEmpty()]
+        [string] $Organization = $Global:DefaultAdcsOrganization,
+        [Parameter(ParameterSetName="DataIn")]
+        [string] $StreetAddress = $Global:DefaultAdcsStreetAddress,
+        [Parameter(ParameterSetName="DataIn")]
+        [string] $PostalCode = $Global:DefaultAdcsPostalCode,
+        [Parameter(ParameterSetName="DataIn")]
+        [ValidateNotNullOrEmpty()]
+        [string] $Locality = $Global:DefaultAdcsLocality,
         [Parameter(ParameterSetName="DataIn")]
         [ValidateNotNullOrEmpty()]
         [string] $State = $Global:DefaultAdcsState,
         [Parameter(ParameterSetName="DataIn")]
         [ValidateNotNullOrEmpty()]
-        [string] $Locality = $Global:DefaultAdcsLocality,
-        [Parameter(ParameterSetName="DataIn")]
-        [string] $PostalCode = $Global:DefaultAdcsPostalCode,
-        [Parameter(ParameterSetName="DataIn")]
-        [string] $StreetAddress = $Global:DefaultAdcsStreetAddress,
-        [Parameter(ParameterSetName="DataIn")]
-        [ValidateNotNullOrEmpty()]
-        [string] $Organization = $Global:DefaultAdcsOrganization,
-        [Parameter(ParameterSetName="DataIn")]
-        [ValidateNotNullOrEmpty()]
-        [string] $OrganizationalUnitName = $Global:DefaultAdcsOrganizationUnit,
+        [string] $CountryName = $Global:DefaultAdcsCountryName,
         [Parameter(ParameterSetName="DataIn")]
         [string[]] $Email = $Global:DefaultAdcsEmail,
 
@@ -2546,7 +2609,7 @@ Function New-CertificatePackage {
     # Create certificate directory
     Write-Verbose "Creating certificate output directory."
     Write-Progress -Id 1 -Activity "Creating Certificate Package for $($Hostname[0])" -Status "Creating Output Directory" -PercentComplete 0
-    $sOutPath = $OutPath + "\" + $Hostname[0]
+    $sOutPath = $OutPath + "\" + $Hostname[0].Replace('*','')
     New-Item -ItemType Directory -Path $sOutPath -ErrorAction Inquire | Out-Null
 
     # Resolve Parameters
@@ -2583,13 +2646,13 @@ Function New-CertificatePackage {
     }
     if ($oConfig) { $p.Add('Config',$oConfig) }
     else {
-        $p.Add('CountryName',$CountryName)
-        $p.Add('State',$State)
-        $p.Add('Locality',$Locality)
-        $p.Add('PostalCode',$PostalCode)
-        $p.Add('StreetAddress',$StreetAddress)
+        $p.Add('OrganizationalUnit',$OrganizationalUnit)
         $p.Add('Organization',$Organization)
-        $p.Add('OrganizationalUnitName',$OrganizationalUnitName)
+        $p.Add('StreetAddress',$StreetAddress)
+        $p.Add('PostalCode',$PostalCode)
+        $p.Add('Locality',$Locality)
+        $p.Add('State',$State)
+        $p.Add('CountryName',$CountryName)
         $p.Add('Email',$Email)
         $p.Add('IncludeEmailInSan',$IncludeEmailInSan)
         $p.Add('Bits',$Bits)
