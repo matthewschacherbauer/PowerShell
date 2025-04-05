@@ -3,12 +3,12 @@
 IIS WEB MANAGEMENT SERVICE (WMSVC) - CERTIFICATE INSTALLATION
 
 Matthew Schacherbauer
-2022-05-08
+2025-03-27
 
 https://github.com/matthewschacherbauer
 https://www.matthewschacherbauer.com
 
-v1.4
+v1.4.1
 
 ===============
 
@@ -21,6 +21,15 @@ Replacement certificates are issued from a local Enterprise Certificate Authorit
 
 For automation, this script can be ran as a scheduled tasked or managed by Group Policy.
 The script will not take action unless a renewal is necessary.
+
+In practice, I found that triggering on the following events were extremely reliable.
+    Microsoft-Windows-GroupPolicy/Operational   8000    (Boot Policy Processing Completed)
+    Microsoft-Windows-GroupPolicy/Operational   8004    (Computer Policy Processing Completed (Manual))
+    Microsoft-Windows-GroupPolicy/Operational   8006    (Computer Policy Processing Completed (Periodic))
+
+If the script should run after a separate process replaces the certificate, such as autoenroll, use these.    
+    Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational    1001    (Certificate has been replaced)
+    Microsoft-Windows-CertificateServicesClient-Lifecycle-System/Operational    1006    (Certificate has been installed)
 
 
 AD CS Template Notes:
@@ -46,6 +55,8 @@ along with this program.  If not, see <https://www.gnu.org/licenses/>.
 
 #>
 
+#Requires -Version 3.0
+#Requires -RunAsAdministrator
 
 [CmdletBinding()]
 Param (
