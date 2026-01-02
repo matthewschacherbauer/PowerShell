@@ -25,7 +25,6 @@
     .\Auto_MSUEFICA2023.ps1 -SkipKEKUpdateOnVirtualHardware
     .NOTES
     Author:     Matthew Schacherbauer
-    Email:      code.ffb23dda@mattschacherbauer.com
     Updated:    2025-12-31
 
     Version:    1.0
