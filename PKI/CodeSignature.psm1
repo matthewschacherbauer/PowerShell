@@ -123,7 +123,7 @@ Function New-CodeSignature {
 		# Timestamp Configuration
 		[switch]	$SkipTimestamp		= $false,
 		[ValidateNotNullOrEmpty()]
-		[string]	$TimestampServer	= "http://timestamp.comodoca.com",
+		[string]	$TimestampServer	= "http://timestamp.sectigo.com",
 
 		# Configuration
 		[switch]	$SkipSigned			= $false,
