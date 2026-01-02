@@ -3,12 +3,12 @@
 Windows Remote Management (WinRM) - CERTIFICATE INSTALLATION
 
 Matthew Schacherbauer
-2025-03-27
+2025-09-30
 
 https://github.com/matthewschacherbauer
 https://www.matthewschacherbauer.com
 
-v1.2
+v1.2.1
 
 ===============
 
@@ -112,7 +112,7 @@ Write-Verbose "Found $($oCertList.count) qualified certificates in the computer 
 if ($oCertList) {
     if ($FriendlyName) {
         Write-Verbose "Checking for certificate with FriendlyName ($($FriendlyName))."
-        $oCert = $oCertList | Where-Object { $_.FriendlyName -eq $FriendlyName }
+        $oCert = $oCertList | Where-Object { $_.FriendlyName -eq $FriendlyName } | Sort-Object NotAfter | Select-Object -Last 1
 
         if (!$oCert) {
             Write-Verbose "No certificate found with the FriendlyName ($($FriendlyName))."
