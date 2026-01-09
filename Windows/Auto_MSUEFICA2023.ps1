@@ -31,9 +31,9 @@
     .\Auto_MSUEFICA2023.ps1 -SkipKEKUpdateOnVirtualHardware
     .NOTES
     Author:     Matthew Schacherbauer
-    Updated:    2026-01-08
+    Updated:    2026-01-09
 
-    Version:    1.1
+    Version:    1.1.1
 
     ===============
     This program is free software: you can redistribute it and/or modify
@@ -65,6 +65,7 @@ Param (
     [Switch] $SkipCleanup,
 
     [Switch] $SkipKEKUpdateOnVirtualHardware,
+    [Switch] $IgnorePendingReboot,
     [Switch] $WhatIf
 )
 
@@ -130,6 +131,9 @@ $AvailableUpdatesDefinitions = @{
 #
 # Current Status Detection
 
+# Force Status Update
+RunSecureBootUpdateTask -Verbose:$Verbose
+
 $UEFICA2023State = [PSCustomObject] @{
     "Registry" = [PSCustomObject] @{
         "AvailableUpdates" = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot").AvailableUpdates
@@ -149,21 +153,50 @@ $UEFICA2023State = [PSCustomObject] @{
 }
 $PerformedChanges = $false
 
+# Retrieve Current Status Information
+Write-Verbose "=========="
+Write-Verbose "Current Values"
+Write-Verbose "AvailableUpdates: [0x$('{0:x}' -f $($UEFICA2023State.Registry.AvailableUpdates)) ($($($UEFICA2023State.Registry.AvailableUpdates)))]"
+Write-Verbose "UEFISecureBootEnabled: [$($UEFICA2023State.Registry.UEFISecureBootEnabled)]"
+Write-Verbose "UEFICA2023Status: [$($UEFICA2023State.Registry.UEFICA2023Status)]"
+Write-Verbose "WindowsUEFICA2023Capable: [$($UEFICA2023State.Registry.WindowsUEFICA2023Capable)]"
+Write-Verbose "DBInstallStatus: [$($UEFICA2023State.DBInstallStatus)]"
+Write-Verbose "MSROMInstallStatus: [$($UEFICA2023State.MSROMInstallStatus)]"
+Write-Verbose "OptROMInstallStatus: [$($UEFICA2023State.OptROMInstallStatus)]"
+Write-Verbose "KEKInstallStatus: [$($UEFICA2023State.KEKInstallStatus)]"
+Write-Verbose "ThirdPartyInstallStatus: [$($UEFICA2023State.ThirdPartyInstallStatus)]"
+Write-Verbose "DBXRevocationStatus: [$($UEFICA2023State.DBXRevocationStatus)]"
+Write-Verbose "=========="
+
+
+#
+# Prerequisite Check
+
 # Abort if Secure Boot is not enabled
 if ( $UEFICA2023State.Registry.UEFISecureBootEnabled -ne 1 ) {
     Write-Warning "Secure Boot is not enabled on the system. Aborting."
-    break
+    return
 }
 
 # Check for empty or missing registry keys
 if ( $null -eq $UEFICA2023State.Registry.AvailableUpdates ) {
     Write-Warning "The AvailableUpdates key is missing. Aborting."
-    break
+    return
 }
 if ( $null -eq $UEFICA2023State.Registry.UEFICA2023Status ) {
     Write-Warning "The UEFICA2023Status key is missing. The system may require updates to be installed. Aborting."
-    break
+    return
 }
+
+# Check for a pending restart
+if ( !$IgnorePendingReboot -and ((Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot").Name | Where-Object { $_ -like "*RestartRequired*" }) ) {
+    Write-Verbose "A restart for an existing operation is pending. Aborting."
+    return 3010
+}
+
+
+#
+# KEK Update Supported Validation
 
 # Virtual Hardware Detection
 if ( !$SkipKEKUpdate -and $SkipKEKUpdateOnVirtualHardware ) {
@@ -191,25 +224,6 @@ if ( !$SkipKEKUpdate ) {
     }
 
 }
-
-
-# Force Status Update
-RunSecureBootUpdateTask -Verbose:$Verbose
-
-# Retrieve Current Status Information
-Write-Verbose "=========="
-Write-Verbose "Current Values"
-Write-Verbose "AvailableUpdates: [0x$('{0:x}' -f $($UEFICA2023State.Registry.AvailableUpdates)) ($($($UEFICA2023State.Registry.AvailableUpdates)))]"
-Write-Verbose "UEFISecureBootEnabled: [$($UEFICA2023State.Registry.UEFISecureBootEnabled)]"
-Write-Verbose "UEFICA2023Status: [$($UEFICA2023State.Registry.UEFICA2023Status)]"
-Write-Verbose "WindowsUEFICA2023Capable: [$($UEFICA2023State.Registry.WindowsUEFICA2023Capable)]"
-Write-Verbose "DBInstallStatus: [$($UEFICA2023State.DBInstallStatus)]"
-Write-Verbose "MSROMInstallStatus: [$($UEFICA2023State.MSROMInstallStatus)]"
-Write-Verbose "OptROMInstallStatus: [$($UEFICA2023State.OptROMInstallStatus)]"
-Write-Verbose "KEKInstallStatus: [$($UEFICA2023State.KEKInstallStatus)]"
-Write-Verbose "ThirdPartyInstallStatus: [$($UEFICA2023State.ThirdPartyInstallStatus)]"
-Write-Verbose "DBXRevocationStatus: [$($UEFICA2023State.DBXRevocationStatus)]"
-Write-Verbose "=========="
 
 
 #
