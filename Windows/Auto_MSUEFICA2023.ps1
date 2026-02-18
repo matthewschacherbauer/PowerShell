@@ -31,9 +31,9 @@
     .\Auto_MSUEFICA2023.ps1 -SkipKEKUpdateOnVirtualHardware
     .NOTES
     Author:     Matthew Schacherbauer
-    Updated:    2026-01-09
+    Updated:    2026-02-18
 
-    Version:    1.1.1
+    Version:    1.2.1
 
     ===============
     This program is free software: you can redistribute it and/or modify
@@ -65,7 +65,6 @@ Param (
     [Switch] $SkipCleanup,
 
     [Switch] $SkipKEKUpdateOnVirtualHardware,
-    [Switch] $IgnorePendingReboot,
     [Switch] $WhatIf
 )
 
@@ -145,6 +144,7 @@ $UEFICA2023State = [PSCustomObject] @{
         "OEMModelNumber" = (Get-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot\Servicing\DeviceAttributes").OEMModelNumber
     }
     "DBInstallStatus" = [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes) -match 'Windows UEFI CA 2023'
+    "DBDefaultInstallStatus" = [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI dbdefault).bytes) -match 'Windows UEFI CA 2023'
     "MSROMInstallStatus" = [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes)-match 'Microsoft UEFI CA 2023'
     "OptROMInstallStatus" = [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI db).bytes) -match 'Microsoft Option ROM UEFI CA 2023'
     "KEKInstallStatus" = [System.Text.Encoding]::ASCII.GetString((Get-SecureBootUEFI kek).bytes) -match 'Microsoft Corporation KEK 2K CA 2023'
@@ -161,6 +161,7 @@ Write-Verbose "UEFISecureBootEnabled: [$($UEFICA2023State.Registry.UEFISecureBoo
 Write-Verbose "UEFICA2023Status: [$($UEFICA2023State.Registry.UEFICA2023Status)]"
 Write-Verbose "WindowsUEFICA2023Capable: [$($UEFICA2023State.Registry.WindowsUEFICA2023Capable)]"
 Write-Verbose "DBInstallStatus: [$($UEFICA2023State.DBInstallStatus)]"
+Write-Verbose "DBDefaultInstallStatus: [$($UEFICA2023State.DBDefaultInstallStatus)]"
 Write-Verbose "MSROMInstallStatus: [$($UEFICA2023State.MSROMInstallStatus)]"
 Write-Verbose "OptROMInstallStatus: [$($UEFICA2023State.OptROMInstallStatus)]"
 Write-Verbose "KEKInstallStatus: [$($UEFICA2023State.KEKInstallStatus)]"
@@ -188,10 +189,9 @@ if ( $null -eq $UEFICA2023State.Registry.UEFICA2023Status ) {
     return
 }
 
-# Check for a pending restart
-if ( !$IgnorePendingReboot -and ((Get-ChildItem "HKLM:\SYSTEM\CurrentControlSet\Control\SecureBoot").Name | Where-Object { $_ -like "*RestartRequired*" }) ) {
-    Write-Verbose "A restart for an existing operation is pending. Aborting."
-    return 3010
+# Check for presence in Secure Boot defaults
+if ( !$UEFICA2023State.DBDefaultInstallStatus ) {
+    Write-Warning "The Secure Boot DBDefault store does not contain the updated certificates. A BIOS reset will clear the certificate from the active database and may result in a boot failure.`nThis script can only update the active database. A vendor firmware upgrade is required to change the defaults."
 }
 
 
